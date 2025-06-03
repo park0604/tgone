@@ -7,6 +7,13 @@ from telethon.sessions import StringSession
 from telethon import TelegramClient, events
 from telethon.tl.types import InputDocument
 
+
+import asyncio
+from telethon import TelegramClient
+from telethon.errors import SessionPasswordNeededError, AuthKeyDuplicatedError, RPCError
+
+
+
 # ================= 1. 载入 .env 中的环境变量 =================
 load_dotenv()  # 自动从当前目录的 .env 文件读取
 
@@ -21,6 +28,7 @@ except Exception as e:
 
 API_ID          = int(config.get('api_id', os.getenv('API_ID', 0)))
 API_HASH        = config.get('api_hash', os.getenv('API_HASH', ''))
+PHONE_NUMBER    = config.get('phone_number', os.getenv('PHONE_NUMBER', ''))
 BOT_TOKEN       = config.get('bot_token', os.getenv('BOT_TOKEN', ''))
 TARGET_GROUP_ID = int(config.get('target_group_id', os.getenv('TARGET_GROUP_ID', 0)))
 MYSQL_HOST      = config.get('db_host', os.getenv('MYSQL_DB_HOST', 'localhost'))
@@ -471,9 +479,39 @@ async def handle_bot_group_media(event):
 
 # ================= 14. 启动两个客户端 =================
 async def main():
+    print(f"【INFO】正在启动“人类账号”与“机器人账号”，请稍候...{PHONE_NUMBER}")
+    
+    try:
+        # Attempt to start the client
+        print("Attempting to start the client...", flush=True)
+        await user_client.connect()
+    except AuthKeyDuplicatedError:
+        # Capture AuthKeyDuplicatedError, delete the old session file and re-login
+        print("Detected duplicate authorization key, deleting old session file and retrying login...", flush=True)
+        await user_client.disconnect()  # Disconnect the client
+        user_client.session.close()  # Ensure the session is closed
+       
+
+        await user_client.connect()
+        # Reconnect after deleting the old session
+        #
+        # 检查客户端是否已连接
+        if not user_client.is_connected():
+            print("客户端连接失败，请检查网络连接或 API 密钥配置。", flush=True)
+            return
+
+    # Check if the user is already authorized
+    if not await user_client.is_user_authorized():
+        print("User is not authorized, starting the login process...", flush=True)
+        # await login()
+    else:
+        print("User is already authorized, no need to log in again", flush=True)
+
+
     await user_client.start()
+    # await user_client.start()
    
-    await bot_client.start(bot_token=BOT_TOKEN)
+    # await bot_client.start(bot_token=BOT_TOKEN)
     print("【INFO】“人类账号”与“机器人账号” 已启动，监听私聊文本/媒体与目标群组。")
     await asyncio.gather(
         user_client.run_until_disconnected(),
