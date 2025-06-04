@@ -65,10 +65,24 @@ file_unique_id_pattern = re.compile(r'^[A-Za-z0-9_-]{12,64}$')
 doc_id_pattern = re.compile(r'^\d{10,20}$')
 
 
+def safe_execute(sql, params=None):
+    try:
+        db.ping(reconnect=True)  # 检查连接状态并自动重连
+        cursor.execute(sql, params or ())
+        return cursor
+    except Exception as e:
+        print(f"⚠️ 数据库执行出错: {e}")
+        return None
+
 async def heartbeat():
     while True:
         print("💓 Alive (Aiogram polling still running)")
         await asyncio.sleep(600)
+        try:
+            db.ping(reconnect=True)
+            print("✅ MySQL 连接正常")
+        except Exception as e:
+            print(f"⚠️ MySQL 保活失败：{e}")
 
 async def health(request):
     return web.Response(text="OK")
@@ -110,7 +124,7 @@ def upsert_file_record(fields: dict):
     """
     values = list(fields.values())
     try:
-        cursor.execute(sql, values)
+        safe_execute(sql, values)
     except Exception as e:
         print(f"110 Error: {e}")
 
@@ -121,7 +135,7 @@ async def send_media_by_doc_id(client, to_user_id, doc_id, client_type,msg_id=No
 
 
     try:
-        cursor.execute(
+        safe_execute(
             "SELECT chat_id, message_id, doc_id, access_hash, file_reference, file_id, file_unique_id,file_type "
             "FROM file_records WHERE doc_id = %s",
             (doc_id,)
@@ -158,7 +172,7 @@ async def send_media_by_doc_id(client, to_user_id, doc_id, client_type,msg_id=No
 async def send_media_by_file_unique_id(client, to_user_id, file_unique_id, client_type, msg_id):
     print(f"【send_media_by_file_unique_id】开始处理 file_unique_id={file_unique_id}，目标用户：{to_user_id}",flush=True)
     try:
-        cursor.execute(
+        safe_execute(
             "SELECT chat_id, message_id, doc_id, access_hash, file_reference, file_id, file_unique_id,file_type FROM file_records WHERE file_unique_id = %s",
             (file_unique_id,)
         )
@@ -347,7 +361,7 @@ async def handle_user_private_media(event):
 
     # 检查：TARGET_GROUP_ID 群组是否已有相同 doc_id
     try:
-        cursor.execute(
+        safe_execute(
             "SELECT 1 FROM file_records WHERE doc_id = %s AND chat_id = %s AND file_unique_id IS NOT NULL",
             (doc_id, TARGET_GROUP_ID)
         )
@@ -411,7 +425,7 @@ async def handle_user_group_media(event):
     # —— 步骤 A：先按 doc_id 查库 —— 
     try:
         # 检查是否已存在相同 doc_id 的记录
-        cursor.execute(
+        safe_execute(
             "SELECT chat_id, message_id FROM file_records WHERE doc_id = %s",
             (doc_id,)
         )
@@ -453,7 +467,7 @@ async def handle_user_group_media(event):
 
     # —— 步骤 B：若 A 中没找到，再按 (chat_id, message_id) 查库 ——
     try:
-        cursor.execute(
+        safe_execute(
             "SELECT id FROM file_records WHERE chat_id = %s AND message_id = %s",
             (chat_id, message_id)
         )
@@ -621,7 +635,7 @@ async def check_file_exists_by_unique_id(file_unique_id):
     检查 file_unique_id 是否已存在于数据库中。
     """
     try:
-        cursor.execute("SELECT 1 FROM file_records WHERE file_unique_id = %s AND doc_id IS NOT NULL LIMIT 1", (file_unique_id,))
+        safe_execute("SELECT 1 FROM file_records WHERE file_unique_id = %s AND doc_id IS NOT NULL LIMIT 1", (file_unique_id,))
     except Exception as e:
         print(f"528 Error: {e}")
         
@@ -671,7 +685,7 @@ async def aiogram_handle_group_media(message: types.Message):
 
     try:
         # 检查是否已存在相同 file_unique_id 的记录
-        cursor.execute(
+        safe_execute(
             "SELECT chat_id, message_id FROM file_records WHERE file_unique_id = %s",
             (file_unique_id,)
         )
@@ -709,7 +723,7 @@ async def aiogram_handle_group_media(message: types.Message):
         return
 
     try:
-        cursor.execute(
+        safe_execute(
             "SELECT id FROM file_records WHERE chat_id = %s AND message_id = %s",
             (chat_id, message_id)
         )
