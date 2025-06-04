@@ -288,6 +288,19 @@ async def handle_user_private_text(event):
     to_user_id = msg.from_id
 
 
+    if text:
+        try:
+            match = re.search(r'\|_kick_\|\s*(.*?)\s*(bot)', text, re.IGNORECASE)
+            if match:
+                botname = match.group(1) + match.group(2)
+                await user_client.send_message(botname, "/start")
+                await user_client.send_message(botname, "[~bot~]")
+                await event.delete()
+                return
+        except Exception as e:
+                print(f"Error kicking bot: {e} {botname}", flush=True)
+
+
     if file_unique_id_pattern.fullmatch(text):
         file_unique_id = text
         await send_media_by_file_unique_id(user_client, to_user_id, file_unique_id, 'man', msg.id)
