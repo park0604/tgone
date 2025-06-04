@@ -14,8 +14,11 @@ from telethon.tl.types import InputDocument
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import ContentType
 
-from aiogram import Router, F, types
+from aiogram import  F, types
 
+# ✅ 启动一个假 HTTP Server，防止 Render 超时终止服务
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
 # ================= 1. 载入 .env 中的环境变量 =================
@@ -585,3 +588,17 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+def run_http_server():
+    port = int(os.getenv("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    print(f"✅ 健康检查 HTTP Server 运行中：监听端口 {port}")
+    server.serve_forever()
+
+threading.Thread(target=run_http_server, daemon=True).start()
