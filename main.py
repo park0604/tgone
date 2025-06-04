@@ -11,14 +11,12 @@ from telethon.tl.types import InputDocument
 
 
 # Aiogram 相关
-from aiogram import Bot, Dispatcher, types
+from aiogram import F, Bot, Dispatcher, types
 from aiogram.types import ContentType
+from aiohttp import web
 
-from aiogram import  F, types
 
-# ✅ 启动一个假 HTTP Server，防止 Render 超时终止服务
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+
 
 
 # ================= 1. 载入 .env 中的环境变量 =================
@@ -42,7 +40,8 @@ MYSQL_HOST      = config.get('db_host', os.getenv('MYSQL_DB_HOST', 'localhost'))
 MYSQL_USER      = config.get('db_user', os.getenv('MYSQL_DB_USER', ''))
 MYSQL_PASSWORD  = config.get('db_password', os.getenv('MYSQL_DB_PASSWORD', ''))
 MYSQL_DB        = config.get('db_name', os.getenv('MYSQL_DB_NAME', ''))
-MYSQL_DB_PORT = int(config.get('db_port', os.getenv('MYSQL_DB_PORT', 3306)))
+MYSQL_DB_PORT   = int(config.get('db_port', os.getenv('MYSQL_DB_PORT', 3306)))
+SESSION_STRING  = os.getenv("USER_SESSION_STRING")
 
                                                 
 USER_SESSION     = str(API_ID) + 'session_name'  # 确保与上传的会话文件名匹配
@@ -59,6 +58,26 @@ mysql_config = {
 }
 db = pymysql.connect(**mysql_config)
 cursor = db.cursor()
+
+
+async def heartbeat():
+    while True:
+        print("💓 Alive (Aiogram polling still running)")
+        await asyncio.sleep(600)
+
+async def health(request):
+    return web.Response(text="OK")
+
+async def start_health_server():
+    app = web.Application()
+    app.router.add_get("/", health)
+    port = int(os.environ.get("PORT", 8080))
+    print(f"✅ Render健康检查 HTTP Server 监听中，端口：{port}")
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host="0.0.0.0", port=port)
+    await site.start()
+
 
 # ================= 3. Helper：从 media.attributes 提取文件名 =================
 def get_file_name(media):
@@ -85,15 +104,23 @@ def upsert_file_record(fields: dict):
         ON DUPLICATE KEY UPDATE {','.join(update_clauses)}
     """
     values = list(fields.values())
-    cursor.execute(sql, values)
+    try:
+        cursor.execute(sql, values)
+    except Exception as e:
+        print(f"MySQL Error: {e}")
 
 # ================= 5.1 send_media_by_doc_id 函数 =================
 async def send_media_by_doc_id(client, to_user_id, doc_id, client_type,msg_id=None):
-    cursor.execute(
-        "SELECT chat_id, message_id, doc_id, access_hash, file_reference, file_id, file_unique_id "
-        "FROM file_records WHERE doc_id = %s",
-        (doc_id,)
-    )
+    try:
+        cursor.execute(
+            "SELECT chat_id, message_id, doc_id, access_hash, file_reference, file_id, file_unique_id "
+            "FROM file_records WHERE doc_id = %s",
+            (doc_id,)
+        )
+    except Exception as e:
+        print(f"MySQL Error: {e}")
+
+
     row = cursor.fetchone()
     if not row:
         await client.send_message(to_user_id, f"未找到 doc_id={doc_id} 对应的文件记录。")
@@ -106,10 +133,14 @@ async def send_media_by_doc_id(client, to_user_id, doc_id, client_type,msg_id=No
 
 # ================= 5.2 send_media_by_file_unique_id 函数 =================
 async def send_media_by_file_unique_id(client, to_user_id, file_unique_id, client_type, msg_id):
-    cursor.execute(
-        "SELECT chat_id, message_id, doc_id, access_hash, file_reference, file_id, file_unique_id FROM file_records WHERE file_unique_id = %s",
-        (file_unique_id,)
-    )
+    try:
+        cursor.execute(
+            "SELECT chat_id, message_id, doc_id, access_hash, file_reference, file_id, file_unique_id FROM file_records WHERE file_unique_id = %s",
+            (file_unique_id,)
+        )
+    except Exception as e:
+        print(f"MySQL Error: {e}")
+
     row = cursor.fetchone()
     if not row:
         await client.send_message(to_user_id, f"未找到 file_unique_id={file_unique_id} 对应的文件。")
@@ -176,9 +207,12 @@ async def send_media_via_bot(bot_client, to_user_id, row,msg_id=None):
         await bot_client.send_message(to_user_id, f"发送文件时出错：{e}")
 
 # ================= 7. 初始化 Telethon 客户端 =================
-user_client = TelegramClient(USER_SESSION, API_ID, API_HASH)
 
-
+if SESSION_STRING:
+    user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+    print("【Telethon】使用 StringSession 登录。")
+else:
+    user_client = TelegramClient(USER_SESSION, API_ID, API_HASH)
 
 
 
@@ -223,10 +257,15 @@ async def handle_user_private_media(event):
     file_name      = get_file_name(media)
 
     # 检查：TARGET_GROUP_ID 群组是否已有相同 doc_id
-    cursor.execute(
-        "SELECT 1 FROM file_records WHERE doc_id = %s AND chat_id = %s",
-        (doc_id, TARGET_GROUP_ID)
-    )
+    try:
+        cursor.execute(
+            "SELECT 1 FROM file_records WHERE doc_id = %s AND chat_id = %s",
+            (doc_id, TARGET_GROUP_ID)
+        )
+    except Exception as e:
+        print(f"MySQL Error: {e}")
+        
+
     if cursor.fetchone():
         await event.delete()
         return
@@ -276,10 +315,15 @@ async def handle_user_group_media(event):
     file_name      = get_file_name(media)
 
     # —— 步骤 A：先按 doc_id 查库 —— 
-    cursor.execute(
-        "SELECT chat_id, message_id FROM file_records WHERE doc_id = %s",
-        (doc_id,)
-    )
+    try:
+        # 检查是否已存在相同 doc_id 的记录
+        cursor.execute(
+            "SELECT chat_id, message_id FROM file_records WHERE doc_id = %s",
+            (doc_id,)
+        )
+    except Exception as e:
+        print(f"MySQL Error: {e}")
+   
     row = cursor.fetchone()
     if row:
         existing_chat_id, existing_msg_id = row
@@ -312,10 +356,13 @@ async def handle_user_group_media(event):
         return
 
     # —— 步骤 B：若 A 中没找到，再按 (chat_id, message_id) 查库 ——
-    cursor.execute(
-        "SELECT id FROM file_records WHERE chat_id = %s AND message_id = %s",
-        (chat_id, message_id)
-    )
+    try:
+        cursor.execute(
+            "SELECT id FROM file_records WHERE chat_id = %s AND message_id = %s",
+            (chat_id, message_id)
+        )
+    except Exception as e:
+        print(f"MySQL Error: {e}")
     if cursor.fetchone():
         # 已存在同条消息 → 更新并保留
         upsert_file_record({
@@ -363,7 +410,7 @@ async def aiogram_handle_private_text(message: types.Message):
     to_user_id = message.chat.id
     reply_to_message = message.message_id
 
-    print(f"{message}")
+  
 
     if text.isdigit():
         await send_media_by_doc_id(bot_client, to_user_id, int(text), 'bot', reply_to_message)
@@ -468,7 +515,11 @@ async def check_file_exists_by_unique_id(file_unique_id):
     """
     检查 file_unique_id 是否已存在于数据库中。
     """
-    cursor.execute("SELECT 1 FROM file_records WHERE file_unique_id = %s LIMIT 1", (file_unique_id,))
+    try:
+        cursor.execute("SELECT 1 FROM file_records WHERE file_unique_id = %s LIMIT 1", (file_unique_id,))
+    except Exception as e:
+        print(f"MySQL Error: {e}")
+        
     return cursor.fetchone() is not None
 
 # —— 9.3 Aiogram：Bot 群组 媒体 处理 —— 
@@ -510,10 +561,15 @@ async def aiogram_handle_group_media(message: types.Message):
     chat_id = msg.chat.id
     message_id = msg.message_id
 
-    cursor.execute(
-        "SELECT chat_id, message_id FROM file_records WHERE file_unique_id = %s",
-        (file_unique_id,)
-    )
+    try:
+        # 检查是否已存在相同 file_unique_id 的记录
+        cursor.execute(
+            "SELECT chat_id, message_id FROM file_records WHERE file_unique_id = %s",
+            (file_unique_id,)
+        )
+    except Exception as e:
+        print(f"MySQL Error: {e}")
+   
     row = cursor.fetchone()
     if row:
         existing_chat_id, existing_msg_id = row
@@ -542,10 +598,14 @@ async def aiogram_handle_group_media(message: types.Message):
             })
         return
 
-    cursor.execute(
-        "SELECT id FROM file_records WHERE chat_id = %s AND message_id = %s",
-        (chat_id, message_id)
-    )
+    try:
+        cursor.execute(
+            "SELECT id FROM file_records WHERE chat_id = %s AND message_id = %s",
+            (chat_id, message_id)
+        )
+    except Exception as e:
+        print(f"MySQL Error: {e}")
+
     if cursor.fetchone():
         upsert_file_record({
             'chat_id'       : chat_id,
@@ -574,8 +634,17 @@ async def aiogram_handle_group_media(message: types.Message):
 # ================= 14. 启动两个客户端 =================
 async def main():
 # 10.1 Telethon “人类账号” 登录
+
+    # 🔁 启动 fake HTTP server 监听 PORT
+    await start_health_server()
+
+    task_heartbeat = asyncio.create_task(heartbeat())
+
     await user_client.start(PHONE_NUMBER)
     print("【Telethon】人类账号 已启动。")
+
+
+
 
     # 10.2 并行运行 Telethon 与 Aiogram
     task_telethon = asyncio.create_task(user_client.run_until_disconnected())
@@ -589,16 +658,3 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
-
-def run_http_server():
-    port = int(os.getenv("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-    print(f"✅ 健康检查 HTTP Server 运行中：监听端口 {port}")
-    server.serve_forever()
-
-threading.Thread(target=run_http_server, daemon=True).start()
