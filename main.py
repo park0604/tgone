@@ -8,14 +8,14 @@ from dotenv import load_dotenv
 from telethon.sessions import StringSession
 from telethon import TelegramClient, events
 from telethon.tl.types import InputDocument
-
+from telethon import events
 
 # Aiogram 相关
 from aiogram import F, Bot, Dispatcher, types
 from aiogram.types import ContentType
 from aiohttp import web
 
-
+import re
 
 
 
@@ -58,6 +58,11 @@ mysql_config = {
 }
 db = pymysql.connect(**mysql_config)
 cursor = db.cursor()
+
+# file_unique_id 通常是 base64 编码短字串，长度 20~35，字母+数字组成
+file_unique_id_pattern = re.compile(r'^[A-Za-z0-9_-]{12,64}$')
+# doc_id 是整数，通常为 Telegram 64-bit ID
+doc_id_pattern = re.compile(r'^\d{10,20}$')
 
 
 async def heartbeat():
@@ -111,20 +116,38 @@ def upsert_file_record(fields: dict):
 
 # ================= 5.1 send_media_by_doc_id 函数 =================
 async def send_media_by_doc_id(client, to_user_id, doc_id, client_type,msg_id=None):
+    print(f"【send_media_by_doc_id】开始处理 doc_id={doc_id}，目标用户：{to_user_id}",flush=True)
+
+
+
     try:
         cursor.execute(
-            "SELECT chat_id, message_id, doc_id, access_hash, file_reference, file_id, file_unique_id "
+            "SELECT chat_id, message_id, doc_id, access_hash, file_reference, file_id, file_unique_id,file_type "
             "FROM file_records WHERE doc_id = %s",
             (doc_id,)
         )
+        row = cursor.fetchone()
     except Exception as e:
         print(f"121 Error: {e}")
-
-
-    row = cursor.fetchone()
-    if not row:
-        await client.send_message(to_user_id, f"未找到 doc_id={doc_id} 对应的文件记录。")
         return
+
+    if not row:
+        if client_type == 'man':
+            try:
+                # 尝试将 user_id 解析成可用的 InputPeer 实体
+                to_user_entity = await client.get_input_entity(to_user_id)
+                await client.send_message(to_user_entity, f"未找到 doc_id={doc_id} 对应的文件记录。")
+            except Exception as e:
+                print(f"获取用户实体失败: {e}")
+                await client.send_message('me', f"无法获取用户实体: {to_user_id}")
+        else:
+            await client.send_message(to_user_id, f"未找到 doc_id={doc_id} 对应的文件记录。")
+        return
+
+
+
+    
+
     if client_type == 'bot':
         # 机器人账号发送
         await send_media_via_bot(client, to_user_id, row, msg_id)
@@ -133,9 +156,10 @@ async def send_media_by_doc_id(client, to_user_id, doc_id, client_type,msg_id=No
 
 # ================= 5.2 send_media_by_file_unique_id 函数 =================
 async def send_media_by_file_unique_id(client, to_user_id, file_unique_id, client_type, msg_id):
+    print(f"【send_media_by_file_unique_id】开始处理 file_unique_id={file_unique_id}，目标用户：{to_user_id}",flush=True)
     try:
         cursor.execute(
-            "SELECT chat_id, message_id, doc_id, access_hash, file_reference, file_id, file_unique_id FROM file_records WHERE file_unique_id = %s",
+            "SELECT chat_id, message_id, doc_id, access_hash, file_reference, file_id, file_unique_id,file_type FROM file_records WHERE file_unique_id = %s",
             (file_unique_id,)
         )
         row = cursor.fetchone()
@@ -158,9 +182,8 @@ async def send_media_by_file_unique_id(client, to_user_id, file_unique_id, clien
 
 # ================= 6.1 send_media_via_man 函数 =================
 async def send_media_via_man(client, to_user_id, row, msg_id=None):
-
-    chat_id, message_id, doc_id, access_hash, file_reference_hex, file_id, file_unique_id = row
-   
+    # to_user_entity = await client.get_input_entity(to_user_id)
+    chat_id, message_id, doc_id, access_hash, file_reference_hex, file_id, file_unique_id, file_type = row
     try:
         file_reference = bytes.fromhex(file_reference_hex)
     except:
@@ -184,15 +207,30 @@ async def send_media_via_man(client, to_user_id, row, msg_id=None):
             msg = await client.get_messages(chat_id, ids=message_id)
             media = msg.document or msg.photo or msg.video
             if not media:
+                print(f"历史消息中未找到对应媒体，可能已被删除。",flush=True)
                 await client.send_message(to_user_id, "历史消息中未找到对应媒体，可能已被删除。")
                 return
-            new_input = InputDocument(
-                id=media.id,
-                access_hash=media.access_hash,
-                file_reference=media.file_reference
-            )
+            print(f"重新获取文件引用：{media.id}, {media.access_hash}, {media.file_reference.hex()}",flush=True)
+            # 区分 photo 和 document
+            if msg.document:
+                new_input = InputDocument(
+                    id=msg.document.id,
+                    access_hash=msg.document.access_hash,
+                    file_reference=msg.document.file_reference
+                )
+            elif msg.photo:
+                new_input = msg.photo  # 直接发送 photo 不需要构建 InputDocument
+            else:
+                await client.send_message(to_user_id, "暂不支持此媒体类型。")
+                return
+            
+            
+            print(f"重新获取文件引用成功，准备发送。",flush=True)
+          
+
             await client.send_file(to_user_id, new_input, reply_to=msg_id)
         except Exception as e:
+            print(f"发送文件时出错：{e}",flush=True)
             await client.send_message(to_user_id, f"发送文件时出错：{e}")
 
 # ================= 6.2 send_media_via_bot 函数 =================
@@ -201,14 +239,26 @@ async def send_media_via_bot(bot_client, to_user_id, row,msg_id=None):
     bot_client: Aiogram Bot 实例
     row: (chat_id, message_id, doc_id, access_hash, file_reference_hex, file_id, file_unique_id)
     """
-    chat_id, message_id, doc_id, access_hash, file_reference_hex, file_id, file_unique_id = row
+    chat_id, message_id, doc_id, access_hash, file_reference_hex, file_id, file_unique_id, file_type = row
 
-    # 直接使用 file_id 来发送；统一用 send_document，Bot API 会自动识别文件类型
+
     try:
-        await bot_client.send_document(to_user_id, file_id, reply_to_message_id=msg_id)
+        if file_type== "photo":
+            # 照片（但不包括 GIF）
+            await bot_client.send_photo(to_user_id, file_id, reply_to_message_id=msg_id)
+      
+        elif file_type == "video":
+            # 视频
+            await bot_client.send_video(to_user_id, file_id, reply_to_message_id=msg_id)
+        elif file_type == "document":
+            # 其他一律当文件发
+            await bot_client.send_document(to_user_id, file_id, reply_to_message_id=msg_id)
+
     except Exception as e:
-        # 如果发生错误，再尝试普通文字提示
-        await bot_client.send_message(to_user_id, f"发送文件时出错：{e}")
+        await bot_client.send_message(to_user_id, f"⚠️ 发送文件失败：{e}")
+    
+
+
 
 # ================= 7. 初始化 Telethon 客户端 =================
 
@@ -220,7 +270,13 @@ else:
 
 
 
+
+
+
 # ================= 8. 私聊文字处理：人类账号 =================
+
+
+
 @user_client.on(events.NewMessage(incoming=True))
 async def handle_user_private_text(event):
     print(f"【Telethon】收到私聊文本：{event.message.text}，来自 {event.message.from_id}",flush=True)
@@ -231,12 +287,23 @@ async def handle_user_private_text(event):
     text = msg.text.strip()
     to_user_id = msg.from_id
 
-    if text.isdigit():
-        doc_id = int(text)
-        await send_media_by_doc_id(user_client, to_user_id, doc_id, client_type='man',msg_id = msg.id)
-    else:
+
+    if file_unique_id_pattern.fullmatch(text):
         file_unique_id = text
-        await send_media_by_file_unique_id(user_client, to_user_id, file_unique_id, client_type='man',msg_id = msg.id)
+        await send_media_by_file_unique_id(user_client, to_user_id, file_unique_id, 'man', msg.id)
+    elif doc_id_pattern.fullmatch(text):
+        doc_id = int(text)
+        await send_media_by_doc_id(user_client, to_user_id, doc_id, 'man', msg.id)
+       
+    else:
+        await event.delete()
+
+    # if text.isdigit():
+    #     doc_id = int(text)
+    #     await send_media_by_doc_id(user_client, to_user_id, doc_id, 'man', msg.id)
+    # else:
+    #     file_unique_id = text
+    #     await send_media_by_file_unique_id(user_client, to_user_id, file_unique_id, 'man', msg.id)
 
     # await event.delete()
 
@@ -250,10 +317,13 @@ async def handle_user_private_media(event):
 
     if msg.document:
         media = msg.document
+        file_type = 'document'
     elif msg.video:
         media = msg.video
+        file_type = 'video'
     else:
         media = msg.photo
+        file_type = 'photo'
 
     doc_id         = media.id
     access_hash    = media.access_hash
@@ -265,7 +335,7 @@ async def handle_user_private_media(event):
     # 检查：TARGET_GROUP_ID 群组是否已有相同 doc_id
     try:
         cursor.execute(
-            "SELECT 1 FROM file_records WHERE doc_id = %s AND chat_id = %s",
+            "SELECT 1 FROM file_records WHERE doc_id = %s AND chat_id = %s AND file_unique_id IS NOT NULL",
             (doc_id, TARGET_GROUP_ID)
         )
     except Exception as e:
@@ -289,6 +359,7 @@ async def handle_user_private_media(event):
         'access_hash'   : access_hash,
         'file_reference': file_reference,
         'mime_type'     : mime_type,
+        'file_type'     : file_type,
         'file_name'     : file_name,
         'file_size'     : file_size,
         'uploader_type' : 'user'
@@ -307,10 +378,13 @@ async def handle_user_group_media(event):
 
     if msg.document:
         media = msg.document
+        file_type = 'document'
     elif msg.video:
         media = msg.video
+        file_type = 'video'
     else:
         media = msg.photo
+        file_type = 'photo'
 
     chat_id        = msg.chat_id
     message_id     = msg.id
@@ -341,6 +415,7 @@ async def handle_user_group_media(event):
                 'access_hash'   : access_hash,
                 'file_reference': file_reference,
                 'mime_type'     : mime_type,
+                'file_type'     : file_type,
                 'file_name'     : file_name,
                 'file_size'     : file_size,
                 'uploader_type' : 'user',
@@ -356,6 +431,7 @@ async def handle_user_group_media(event):
                 'access_hash'   : access_hash,
                 'file_reference': file_reference,
                 'mime_type'     : mime_type,
+                'file_type'     : file_type,
                 'file_name'     : file_name,
                 'file_size'     : file_size,
                 'uploader_type' : 'user'
@@ -379,6 +455,7 @@ async def handle_user_group_media(event):
             'access_hash'   : access_hash,
             'file_reference': file_reference,
             'mime_type'     : mime_type,
+            'file_type'     : file_type,
             'file_name'     : file_name,
             'file_size'     : file_size,
             'uploader_type' : 'user'
@@ -392,6 +469,7 @@ async def handle_user_group_media(event):
             'access_hash'   : access_hash,
             'file_reference': file_reference,
             'mime_type'     : mime_type,
+            'file_type'     : file_type,
             'file_name'     : file_name,
             'file_size'     : file_size,
             'uploader_type' : 'user'
@@ -419,12 +497,12 @@ async def aiogram_handle_private_text(message: types.Message):
 
   
 
-    if text.isdigit():
+    if file_unique_id_pattern.fullmatch(text):
+        await send_media_by_file_unique_id(bot_client, to_user_id, text, 'bot', reply_to_message)
+    elif doc_id_pattern.fullmatch(text):
         await send_media_by_doc_id(bot_client, to_user_id, int(text), 'bot', reply_to_message)
     else:
-        await send_media_by_file_unique_id(bot_client, to_user_id, text, 'bot', reply_to_message)
-
-    # await message.delete()
+        await message.delete()
 
 # —— 9.2 Aiogram：Bot 私聊 媒体 处理 —— 
 # 私聊媒体（图片/文档/视频）
@@ -444,6 +522,7 @@ async def aiogram_handle_private_media(message: types.Message):
         file_id = largest.file_id
         file_unique_id = largest.file_unique_id
         mime_type = 'image/jpeg'
+        file_type = 'photo'
         file_size = largest.file_size
         file_name = None
         # 用 Bot API 发到目标群组
@@ -453,6 +532,7 @@ async def aiogram_handle_private_media(message: types.Message):
         file_id = message.document.file_id
         file_unique_id = message.document.file_unique_id
         mime_type = message.document.mime_type
+        file_type = 'document'
         file_size = message.document.file_size
         file_name = message.document.file_name
        
@@ -461,6 +541,7 @@ async def aiogram_handle_private_media(message: types.Message):
         file_id = message.video.file_id
         file_unique_id = message.video.file_unique_id
         mime_type = message.video.mime_type or 'video/mp4'
+        file_type = 'video'
         file_size = message.video.file_size
         file_name = getattr(message.video, 'file_name', None)
        
@@ -483,6 +564,7 @@ async def aiogram_handle_private_media(message: types.Message):
             largest = ret.photo[-1]
             file_unique_id = largest.file_unique_id
             file_id = largest.file_id
+            file_type = 'photo'
             mime_type = 'image/jpeg'
             file_size = largest.file_size
             file_name = None
@@ -490,6 +572,7 @@ async def aiogram_handle_private_media(message: types.Message):
         elif ret.document:
             file_unique_id = ret.document.file_unique_id
             file_id = ret.document.file_id
+            file_type = 'document'
             mime_type = ret.document.mime_type
             file_size = ret.document.file_size
             file_name = ret.document.file_name
@@ -497,6 +580,7 @@ async def aiogram_handle_private_media(message: types.Message):
         else:  # msg.video
             file_unique_id = ret.video.file_unique_id
             file_id = ret.video.file_id
+            file_type = 'video'
             mime_type = ret.video.mime_type or 'video/mp4'
             file_size = ret.video.file_size
             file_name = getattr(ret.video, 'file_name', None)
@@ -506,6 +590,7 @@ async def aiogram_handle_private_media(message: types.Message):
         upsert_file_record({
                 'file_unique_id': file_unique_id,
                 'file_id'       : file_id,
+                'file_type'     : file_type,
                 'mime_type'     : mime_type,
                 'file_name'     : file_name,
                 'file_size'     : file_size,
@@ -523,7 +608,7 @@ async def check_file_exists_by_unique_id(file_unique_id):
     检查 file_unique_id 是否已存在于数据库中。
     """
     try:
-        cursor.execute("SELECT 1 FROM file_records WHERE file_unique_id = %s LIMIT 1", (file_unique_id,))
+        cursor.execute("SELECT 1 FROM file_records WHERE file_unique_id = %s AND doc_id IS NOT NULL LIMIT 1", (file_unique_id,))
     except Exception as e:
         print(f"528 Error: {e}")
         
@@ -547,6 +632,7 @@ async def aiogram_handle_group_media(message: types.Message):
         largest = msg.photo[-1]
         file_unique_id = largest.file_unique_id
         file_id = largest.file_id
+        file_type = 'photo'
         mime_type = 'image/jpeg'
         file_size = largest.file_size
         file_name = None
@@ -554,6 +640,7 @@ async def aiogram_handle_group_media(message: types.Message):
     elif msg.document:
         file_unique_id = msg.document.file_unique_id
         file_id = msg.document.file_id
+        file_type = 'document'
         mime_type = msg.document.mime_type
         file_size = msg.document.file_size
         file_name = msg.document.file_name
@@ -561,6 +648,7 @@ async def aiogram_handle_group_media(message: types.Message):
     else:  # msg.video
         file_unique_id = msg.video.file_unique_id
         file_id = msg.video.file_id
+        file_type = 'video'
         mime_type = msg.video.mime_type or 'video/mp4'
         file_size = msg.video.file_size
         file_name = getattr(msg.video, 'file_name', None)
@@ -584,6 +672,7 @@ async def aiogram_handle_group_media(message: types.Message):
             upsert_file_record({
                 'file_unique_id': file_unique_id,
                 'file_id'       : file_id,
+                'file_type'     : file_type,
                 'mime_type'     : mime_type,
                 'file_name'     : file_name,
                 'file_size'     : file_size,
@@ -598,6 +687,7 @@ async def aiogram_handle_group_media(message: types.Message):
                 'message_id'    : message_id,
                 'file_unique_id': file_unique_id,
                 'file_id'       : file_id,
+                'file_type'     : file_type,
                 'mime_type'     : mime_type,
                 'file_name'     : file_name,
                 'file_size'     : file_size,
@@ -619,6 +709,7 @@ async def aiogram_handle_group_media(message: types.Message):
             'message_id'    : message_id,
             'file_unique_id': file_unique_id,
             'file_id'       : file_id,
+            'file_type'     : file_type,
             'mime_type'     : mime_type,
             'file_name'     : file_name,
             'file_size'     : file_size,
@@ -630,6 +721,7 @@ async def aiogram_handle_group_media(message: types.Message):
             'message_id'    : message_id,
             'file_unique_id': file_unique_id,
             'file_id'       : file_id,
+            'file_type'     : file_type,
             'mime_type'     : mime_type,
             'file_name'     : file_name,
             'file_size'     : file_size,
