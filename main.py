@@ -72,7 +72,7 @@ async def start_health_server():
     app = web.Application()
     app.router.add_get("/", health)
     port = int(os.environ.get("PORT", 8080))
-    print(f"✅ Render健康检查 HTTP Server 监听中，端口：{port}")
+    print(f"✅ Render健康检查 HTTP Server 监听中，端口：{port}",flush=True)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, host="0.0.0.0", port=port)
@@ -138,14 +138,18 @@ async def send_media_by_file_unique_id(client, to_user_id, file_unique_id, clien
             "SELECT chat_id, message_id, doc_id, access_hash, file_reference, file_id, file_unique_id FROM file_records WHERE file_unique_id = %s",
             (file_unique_id,)
         )
+        row = cursor.fetchone()
+
+        if not row:
+            await client.send_message(to_user_id, f"未找到 file_unique_id={file_unique_id} 对应的文件。")
+            return
+    
     except Exception as e:
         print(f"MySQL Error: {e}")
-
-    row = cursor.fetchone()
-    if not row:
-        await client.send_message(to_user_id, f"未找到 file_unique_id={file_unique_id} 对应的文件。")
         return
-    
+
+
+
     if client_type == 'bot':
         # 机器人账号发送
         await send_media_via_bot(client, to_user_id, row, msg_id)
@@ -210,7 +214,7 @@ async def send_media_via_bot(bot_client, to_user_id, row,msg_id=None):
 
 if SESSION_STRING:
     user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
-    print("【Telethon】使用 StringSession 登录。")
+    print("【Telethon】使用 StringSession 登录。",flush=True)
 else:
     user_client = TelegramClient(USER_SESSION, API_ID, API_HASH)
 
@@ -400,7 +404,7 @@ dp = Dispatcher()
 
 @dp.message(F.chat.type == "private", F.content_type.in_({ContentType.TEXT}))
 async def aiogram_handle_private_text(message: types.Message):
-    print(f"【Aiogram】收到私聊文本：{message.text}，来自 {message.from_user.id}")
+    print(f"【Aiogram】收到私聊文本：{message.text}，来自 {message.from_user.id}",flush=True)
     # 只处理“私聊里发来的文本”
     if message.chat.type != "private" or message.content_type != ContentType.TEXT:
         return
@@ -423,7 +427,7 @@ async def aiogram_handle_private_text(message: types.Message):
 # 私聊媒体（图片/文档/视频）
 @dp.message(F.chat.type == "private", F.content_type.in_({ContentType.PHOTO, ContentType.DOCUMENT, ContentType.VIDEO}))
 async def aiogram_handle_private_media(message: types.Message):
-    print(f"【Aiogram】收到私聊媒体：{message.content_type}，来自 {message.from_user.id}")
+    print(f"【Aiogram】收到私聊媒体：{message.content_type}，来自 {message.from_user.id}",flush=True)
     # 只处理“私聊里发来的媒体”
     if message.chat.type != "private" or message.content_type not in {
         ContentType.PHOTO, ContentType.DOCUMENT, ContentType.VIDEO
@@ -460,7 +464,7 @@ async def aiogram_handle_private_media(message: types.Message):
 
     # ⬇️ 检查是否已存在
     if await check_file_exists_by_unique_id(file_unique_id):
-        print(f"已存在：{file_unique_id}，跳过转发")
+        print(f"已存在：{file_unique_id}，跳过转发",flush=True)
 
     else:
         ret = None
@@ -526,7 +530,7 @@ async def check_file_exists_by_unique_id(file_unique_id):
 # 群组媒体（图片/文档/视频），只处理指定群组
 @dp.message(F.chat.id == TARGET_GROUP_ID, F.content_type.in_({ContentType.PHOTO, ContentType.DOCUMENT, ContentType.VIDEO}))
 async def aiogram_handle_group_media(message: types.Message):
-    print(f"【Aiogram】收到群组媒体：{message.content_type}，来自 {message.from_user.id}")
+    print(f"【Aiogram】收到群组媒体：{message.content_type}，来自 {message.from_user.id}",flush=True)
     # 只处理“指定群组里发来的媒体”
     if message.chat.id != TARGET_GROUP_ID or message.content_type not in {
         ContentType.PHOTO, ContentType.DOCUMENT, ContentType.VIDEO
@@ -641,7 +645,7 @@ async def main():
     task_heartbeat = asyncio.create_task(heartbeat())
 
     await user_client.start(PHONE_NUMBER)
-    print("【Telethon】人类账号 已启动。")
+    print("【Telethon】人类账号 已启动。",flush=True)
 
 
 
@@ -649,7 +653,7 @@ async def main():
     # 10.2 并行运行 Telethon 与 Aiogram
     task_telethon = asyncio.create_task(user_client.run_until_disconnected())
 
-    print("【Aiogram】Bot（纯 Bot-API） 已启动，监听私聊＋群组媒体。")
+    print("【Aiogram】Bot（纯 Bot-API） 已启动，监听私聊＋群组媒体。",flush=True)
     await dp.start_polling(bot_client)  # Aiogram 轮询
 
     # 理论上 Aiogram 轮询不会退出，若退出则让 Telethon 同样停止
