@@ -107,7 +107,7 @@ def upsert_file_record(fields: dict):
     try:
         cursor.execute(sql, values)
     except Exception as e:
-        print(f"MySQL Error: {e}")
+        print(f"110 Error: {e}")
 
 # ================= 5.1 send_media_by_doc_id 函数 =================
 async def send_media_by_doc_id(client, to_user_id, doc_id, client_type,msg_id=None):
@@ -118,7 +118,7 @@ async def send_media_by_doc_id(client, to_user_id, doc_id, client_type,msg_id=No
             (doc_id,)
         )
     except Exception as e:
-        print(f"MySQL Error: {e}")
+        print(f"121 Error: {e}")
 
 
     row = cursor.fetchone()
@@ -145,7 +145,7 @@ async def send_media_by_file_unique_id(client, to_user_id, file_unique_id, clien
             return
     
     except Exception as e:
-        print(f"MySQL Error: {e}")
+        print(f"148 Error: {e}")
         return
 
 
@@ -223,6 +223,7 @@ else:
 # ================= 8. 私聊文字处理：人类账号 =================
 @user_client.on(events.NewMessage(incoming=True))
 async def handle_user_private_text(event):
+    print(f"【Telethon】收到私聊文本：{event.message.text}，来自 {event.message.from_id}",flush=True)
     msg = event.message
     if not msg.is_private or msg.media or not msg.text:
         return
@@ -242,6 +243,7 @@ async def handle_user_private_text(event):
 # ================= 9. 私聊媒体处理：人类账号 =================
 @user_client.on(events.NewMessage(incoming=True))
 async def handle_user_private_media(event):
+    print(f"【Telethon】收到私聊媒体：{event.message.media}，来自 {event.message.from_id}",flush=True)
     msg = event.message
     if not msg.is_private or not (msg.document or msg.photo or msg.video):
         return
@@ -267,7 +269,7 @@ async def handle_user_private_media(event):
             (doc_id, TARGET_GROUP_ID)
         )
     except Exception as e:
-        print(f"MySQL Error: {e}")
+        print(f"272 Error: {e}")
         
 
     if cursor.fetchone():
@@ -298,6 +300,7 @@ async def handle_user_private_media(event):
 # ================= 12. 群组媒体处理：人类账号 =================
 @user_client.on(events.NewMessage(chats=TARGET_GROUP_ID, incoming=True))
 async def handle_user_group_media(event):
+    print(f"【Telethon】在指定群组，收到群组媒体：{event.message.media}，来自 {event.message.from_id}",flush=True)
     msg = event.message
     if not (msg.document or msg.photo or msg.video):
         return
@@ -326,7 +329,7 @@ async def handle_user_group_media(event):
             (doc_id,)
         )
     except Exception as e:
-        print(f"MySQL Error: {e}")
+        print(f"332 Error: {e}")
    
     row = cursor.fetchone()
     if row:
@@ -366,7 +369,7 @@ async def handle_user_group_media(event):
             (chat_id, message_id)
         )
     except Exception as e:
-        print(f"MySQL Error: {e}")
+        print(f"372 Error: {e}")
     if cursor.fetchone():
         # 已存在同条消息 → 更新并保留
         upsert_file_record({
@@ -522,7 +525,7 @@ async def check_file_exists_by_unique_id(file_unique_id):
     try:
         cursor.execute("SELECT 1 FROM file_records WHERE file_unique_id = %s LIMIT 1", (file_unique_id,))
     except Exception as e:
-        print(f"MySQL Error: {e}")
+        print(f"528 Error: {e}")
         
     return cursor.fetchone() is not None
 
@@ -572,7 +575,7 @@ async def aiogram_handle_group_media(message: types.Message):
             (file_unique_id,)
         )
     except Exception as e:
-        print(f"MySQL Error: {e}")
+        print(f"578 Error: {e}")
    
     row = cursor.fetchone()
     if row:
@@ -608,7 +611,7 @@ async def aiogram_handle_group_media(message: types.Message):
             (chat_id, message_id)
         )
     except Exception as e:
-        print(f"MySQL Error: {e}")
+        print(f"614 Error: {e}")
 
     if cursor.fetchone():
         upsert_file_record({
