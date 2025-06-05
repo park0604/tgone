@@ -87,15 +87,39 @@ async def heartbeat():
 async def health(request):
     return web.Response(text="OK")
 
-async def start_health_server():
+async def start_webhook_server():
+    BOT_MODE = os.getenv("BOT_MODE", "polling").lower()
+    if BOT_MODE != "webhook":
+        return  # 不处理，回到 polling 逻辑
+
+    BASE_URL = os.getenv("BASE_URL", "")
+    WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook")
+    WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
+    WEBHOOK_URL = f"{BASE_URL}{WEBHOOK_PATH}"
+    PORT = int(os.environ.get("PORT", 8080))
+
     app = web.Application()
+
+    # 健康检查（保留 GET /）
+    async def health(request):
+        return web.Response(text="OK")
     app.router.add_get("/", health)
-    port = int(os.environ.get("PORT", 8080))
-    print(f"✅ Render健康检查 HTTP Server 监听中，端口：{port}",flush=True)
+
+    # Webhook 处理器
+    webhook_handler = dp.webhook_handler(bot_client, secret_token=WEBHOOK_SECRET)
+    app.router.add_post(WEBHOOK_PATH, webhook_handler)
+
+    await bot_client.set_webhook(url=WEBHOOK_URL, secret_token=WEBHOOK_SECRET)
+    print(f"✅ Webhook 模式启动：{WEBHOOK_URL}（监听 PORT={PORT}）", flush=True)
+
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, host="0.0.0.0", port=port)
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
+
+    while True:
+        await asyncio.sleep(3600)
+
 
 
 # ================= 3. Helper：从 media.attributes 提取文件名 =================
@@ -761,8 +785,7 @@ async def aiogram_handle_group_media(message: types.Message):
 async def main():
 # 10.1 Telethon “人类账号” 登录
 
-    # 🔁 启动 fake HTTP server 监听 PORT
-    await start_health_server()
+   
 
     task_heartbeat = asyncio.create_task(heartbeat())
 
@@ -775,8 +798,16 @@ async def main():
     # 10.2 并行运行 Telethon 与 Aiogram
     task_telethon = asyncio.create_task(user_client.run_until_disconnected())
 
-    print("【Aiogram】Bot（纯 Bot-API） 已启动，监听私聊＋群组媒体。",flush=True)
-    await dp.start_polling(bot_client)  # Aiogram 轮询
+
+    BOT_MODE = os.getenv("BOT_MODE", "polling").lower()
+    if BOT_MODE == "webhook":
+        print("🚀 啟動 Webhook 模式")
+        await start_webhook_server()
+    else:
+        print("【Aiogram】Bot（纯 Bot-API） 已启动，监听私聊＋群组媒体。",flush=True)
+        await dp.start_polling(bot_client)  # Aiogram 轮询
+
+    
 
     # 理论上 Aiogram 轮询不会退出，若退出则让 Telethon 同样停止
     task_telethon.cancel()
