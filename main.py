@@ -77,12 +77,12 @@ def safe_execute(sql, params=None):
 async def heartbeat():
     while True:
         print("💓 Alive (Aiogram polling still running)")
-        await asyncio.sleep(600)
         try:
             db.ping(reconnect=True)
             print("✅ MySQL 连接正常")
         except Exception as e:
             print(f"⚠️ MySQL 保活失败：{e}")
+        await asyncio.sleep(600)
 
 async def health(request):
     return web.Response(text="OK")
@@ -96,7 +96,7 @@ async def start_webhook_server():
     WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook")
     WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
     WEBHOOK_URL = f"{BASE_URL}{WEBHOOK_PATH}"
-    PORT = int(os.environ.get("PORT", 8080))
+    PORT = int(os.environ.get("PORT", 10000))
 
     app = web.Application()
 
