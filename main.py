@@ -179,8 +179,6 @@ def upsert_file_record(fields: dict):
 async def send_media_by_doc_id(client, to_user_id, doc_id, client_type,msg_id=None):
     print(f"【send_media_by_doc_id】开始处理 doc_id={doc_id}，目标用户：{to_user_id}",flush=True)
 
-
-
     try:
         safe_execute(
             "SELECT chat_id, message_id, doc_id, access_hash, file_reference, file_id, file_unique_id,file_type "
@@ -205,10 +203,6 @@ async def send_media_by_doc_id(client, to_user_id, doc_id, client_type,msg_id=No
             await client.send_message(to_user_id, f"未找到 doc_id={doc_id} 对应的文件记录。")
         return
 
-
-
-    
-
     if client_type == 'bot':
         # 机器人账号发送
         await send_media_via_bot(client, to_user_id, row, msg_id)
@@ -232,9 +226,6 @@ async def send_media_by_file_unique_id(client, to_user_id, file_unique_id, clien
     except Exception as e:
         print(f"148 Error: {e}")
         return
-
-
-
     if client_type == 'bot':
         # 机器人账号发送
         await send_media_via_bot(client, to_user_id, row, msg_id)
@@ -566,8 +557,6 @@ async def aiogram_handle_private_text(message: types.Message):
     # 只处理“私聊里发来的文本”
     if message.chat.type != "private" or message.content_type != ContentType.TEXT:
         return
-    
-
     text = message.text.strip()
     to_user_id = message.chat.id
     reply_to_message = message.message_id
