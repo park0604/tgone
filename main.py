@@ -15,6 +15,8 @@ from aiogram import F, Bot, Dispatcher, types
 from aiogram.types import ContentType
 from aiohttp import web
 
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+
 import re
 
 
@@ -98,6 +100,10 @@ async def start_webhook_server():
     WEBHOOK_URL = f"{BASE_URL}{WEBHOOK_PATH}"
     PORT = int(os.environ.get("PORT", 10000))
 
+    # 设置 Telegram webhook
+    await bot_client.set_webhook(WEBHOOK_URL, secret_token=WEBHOOK_SECRET)
+    print(f"✅ Webhook 设置成功：{WEBHOOK_URL}", flush=True)
+
     app = web.Application()
 
     # 健康检查（保留 GET /）
@@ -105,17 +111,21 @@ async def start_webhook_server():
         return web.Response(text="OK")
     app.router.add_get("/", health)
 
-    # Webhook 处理器
-    webhook_handler = dp.webhook_handler(bot_client, secret_token=WEBHOOK_SECRET)
-    app.router.add_post(WEBHOOK_PATH, webhook_handler)
+    # 设置 aiogram webhook handler
+    SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot_client,
+        secret_token=WEBHOOK_SECRET,
+    ).register(app, path=WEBHOOK_PATH)
 
-    await bot_client.set_webhook(url=WEBHOOK_URL, secret_token=WEBHOOK_SECRET)
-    print(f"✅ Webhook 模式启动：{WEBHOOK_URL}（监听 PORT={PORT}）", flush=True)
+    # 初始化 application
+    setup_application(app, dp)
 
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
+    print(f"✅ aiohttp Web 服务监听端口：{PORT}", flush=True)
 
     while True:
         await asyncio.sleep(3600)
