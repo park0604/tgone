@@ -12,6 +12,8 @@ from telethon import events
 
 # Aiogram 相关
 from aiogram import F, Bot, Dispatcher, types
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from aiogram.types import ContentType
 from aiohttp import web
 
@@ -44,9 +46,11 @@ MYSQL_PASSWORD  = config.get('db_password', os.getenv('MYSQL_DB_PASSWORD', ''))
 MYSQL_DB        = config.get('db_name', os.getenv('MYSQL_DB_NAME', ''))
 MYSQL_DB_PORT   = int(config.get('db_port', os.getenv('MYSQL_DB_PORT', 3306)))
 SESSION_STRING  = os.getenv("USER_SESSION_STRING")
-
-                                                
-USER_SESSION     = str(API_ID) + 'session_name'  # 确保与上传的会话文件名匹配
+BOT_MODE        = os.getenv("BOT_MODE", "polling").lower()
+WEBHOOK_SECRET  = os.getenv("WEBHOOK_SECRET", "")  
+WEBHOOK_PATH    = os.getenv("WEBHOOK_PATH", "/")       
+WEBHOOK_HOST    = os.getenv("WEBHOOK_HOST")  # 确保设置为你的域名或 IP                                   
+USER_SESSION    = str(API_ID) + 'session_name'  # 确保与上传的会话文件名匹配
 
 # ================= 2. 初始化 MySQL 连接 =================
 mysql_config = {
@@ -89,46 +93,55 @@ async def heartbeat():
 async def health(request):
     return web.Response(text="OK")
 
-async def start_webhook_server():
-    BOT_MODE = os.getenv("BOT_MODE", "polling").lower()
-    if BOT_MODE != "webhook":
-        return  # 不处理，回到 polling 逻辑
 
-    BASE_URL = os.getenv("BASE_URL", "")
-    WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook")
-    WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
-    WEBHOOK_URL = f"{BASE_URL}{WEBHOOK_PATH}"
-    PORT = int(os.environ.get("PORT", 10000))
+async def on_startup(bot: Bot):
+    webhook_url = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
+    print(f"🔗 設定 Telegram webhook 為：{webhook_url}")
+    await bot.delete_webhook(drop_pending_updates=True)
+    await bot.set_webhook(webhook_url)
 
-    # 设置 Telegram webhook
-    await bot_client.set_webhook(WEBHOOK_URL, secret_token=WEBHOOK_SECRET)
-    print(f"✅ Webhook 设置成功：{WEBHOOK_URL}", flush=True)
 
-    app = web.Application()
 
-    # 健康检查（保留 GET /）
-    async def health(request):
-        return web.Response(text="OK")
-    app.router.add_get("/", health)
+# async def start_webhook_server():
+#     BOT_MODE = os.getenv("BOT_MODE", "polling").lower()
+#     if BOT_MODE != "webhook":
+#         return  # 不处理，回到 polling 逻辑
 
-    # 设置 aiogram webhook handler
-    SimpleRequestHandler(
-        dispatcher=dp,
-        bot=bot_client,
-        secret_token=WEBHOOK_SECRET,
-    ).register(app, path=WEBHOOK_PATH)
+#     BASE_URL = os.getenv("BASE_URL", "")
+#     WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/")
+#     WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
+#     WEBHOOK_URL = f"{BASE_URL}{WEBHOOK_PATH}"
+#     PORT = int(os.environ.get("PORT", 10000))
 
-    # 初始化 application
-    setup_application(app, dp)
+#     # 设置 Telegram webhook
+#     await bot_client.set_webhook(WEBHOOK_URL, secret_token=WEBHOOK_SECRET)
+#     print(f"✅ Webhook 设置成功：{WEBHOOK_URL}", flush=True)
 
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
-    print(f"✅ aiohttp Web 服务监听端口：{PORT}", flush=True)
+#     app = web.Application()
 
-    while True:
-        await asyncio.sleep(3600)
+#     # 健康检查（保留 GET /）
+#     async def health(request):
+#         return web.Response(text="OK")
+#     app.router.add_get("/", health)
+
+#     # 设置 aiogram webhook handler
+#     SimpleRequestHandler(
+#         dispatcher=dp,
+#         bot=bot_client,
+#         secret_token=WEBHOOK_SECRET,
+#     ).register(app, path=WEBHOOK_PATH)
+
+#     # 初始化 application
+#     setup_application(app, dp)
+
+#     runner = web.AppRunner(app)
+#     await runner.setup()
+#     site = web.TCPSite(runner, "0.0.0.0", PORT)
+#     await site.start()
+#     print(f"✅ aiohttp Web 服务监听端口：{PORT}", flush=True)
+
+#     while True:
+#         await asyncio.sleep(3600)
 
 
 
@@ -538,8 +551,11 @@ async def handle_user_group_media(event):
     # B 分支保留消息，不删除
 
 
-bot_client = Bot(token=BOT_TOKEN)
-# dp  = Dispatcher()
+bot_client = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
+
 dp = Dispatcher()
 
 # —— 9.1 Aiogram：Bot 私聊 文本 处理 —— 
@@ -809,10 +825,20 @@ async def main():
     task_telethon = asyncio.create_task(user_client.run_until_disconnected())
 
 
-    BOT_MODE = os.getenv("BOT_MODE", "polling").lower()
+
     if BOT_MODE == "webhook":
+        dp.startup.register(on_startup)
         print("🚀 啟動 Webhook 模式")
-        await start_webhook_server()
+
+        app = web.Application()
+        app.router.add_get("/", health)  # ✅ 健康检查路由
+
+        SimpleRequestHandler(dispatcher=dp, bot=bot_client).register(app, path=WEBHOOK_PATH)
+        setup_application(app, dp, bot=bot_client)
+
+        # ✅ Render 环境用 PORT，否则本地用 8080
+        port = int(os.environ.get("PORT", 8080))
+        await web._run_app(app, host="0.0.0.0", port=port)
     else:
         print("【Aiogram】Bot（纯 Bot-API） 已启动，监听私聊＋群组媒体。",flush=True)
         await dp.start_polling(bot_client)  # Aiogram 轮询
