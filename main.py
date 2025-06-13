@@ -338,10 +338,11 @@ else:
 
 @user_client.on(events.NewMessage(incoming=True))
 async def handle_user_private_text(event):
-    print(f"【Telethon】收到私聊文本：{event.message.text}，来自 {event.message.from_id}",flush=True)
     msg = event.message
     if not msg.is_private or msg.media or not msg.text:
         return
+
+    print(f"【Telethon】收到私聊文本：{event.message.text}，来自 {event.message.from_id}",flush=True)
 
     text = msg.text.strip()
     to_user_id = msg.from_id
@@ -382,10 +383,11 @@ async def handle_user_private_text(event):
 # ================= 9. 私聊媒体处理：人类账号 =================
 @user_client.on(events.NewMessage(incoming=True))
 async def handle_user_private_media(event):
-    print(f"【Telethon】收到私聊媒体：{event.message.media}，来自 {event.message.from_id}",flush=True)
     msg = event.message
     if not msg.is_private or not (msg.document or msg.photo or msg.video):
         return
+    print(f"【Telethon】收到私聊媒体：{event.message.media}，来自 {event.message.from_id}",flush=True)
+ 
 
     if msg.document:
         media = msg.document
@@ -420,9 +422,12 @@ async def handle_user_private_media(event):
 
     forward_pattern = re.compile(r'\|_forward_\|\@(\d+)')
     match = forward_pattern.search(caption)
+    print(f"【Telethon】匹配到的转发模式：{match}",flush=True)
+   
     if match:
         
         captured_str = match.group(1).strip()  # 捕获到的字符串
+        print(f"【Telethon】捕获到的字符串：{captured_str}",flush=True)
 
         captured_str = str(captured_str)
         if captured_str.startswith('-100'):
@@ -430,12 +435,15 @@ async def handle_user_private_media(event):
         #判断 captured_str 是否为数字
 
         if captured_str.isdigit():
+            print(f"【Telethon】捕获到的字符串是数字：{captured_str}",flush=True)
             destination_chat_id = int(captured_str)
         else:
+            print(f"【Telethon】捕获到的字符串不是数字：{captured_str}",flush=True)
             destination_chat_id = str(captured_str)
         
         ret = await user_client.send_file(destination_chat_id, msg.media)
-
+        print(f"【Telethon】已转发到目标群组：{destination_chat_id}，消息 ID：{ret.id}",flush=True)
+        print(f"{ret}")
 
     if cursor.fetchone():
         await event.delete()
