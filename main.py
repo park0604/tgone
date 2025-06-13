@@ -427,16 +427,17 @@ async def handle_user_private_media(event):
         captured_str = match.group(1).strip()  # 捕获到的字符串
         print(f"【Telethon】捕获到的字符串：{captured_str}",flush=True)
 
-        captured_str = str(captured_str)
-        if captured_str.startswith('-100'):
-            captured_str = captured_str.replace('-100','')
-        #判断 captured_str 是否为数字
+        
 
         if captured_str.isdigit():
             print(f"【Telethon】捕获到的字符串是数字：{captured_str}",flush=True)
             destination_chat_id = int(captured_str)
         else:
             print(f"【Telethon】捕获到的字符串不是数字：{captured_str}",flush=True)
+            captured_str = str(captured_str)
+            if captured_str.startswith('-100'):
+                captured_str = captured_str.replace('-100','')
+            #判断 captured_str 是否为数字
             destination_chat_id = str(captured_str)
         
         ret = await user_client.send_file(destination_chat_id, msg.media)
