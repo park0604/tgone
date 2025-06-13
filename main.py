@@ -418,8 +418,9 @@ async def handle_user_private_media(event):
     except Exception as e:
         print(f"272 Error: {e}")
         
-    forward_pattern = re.compile(r'\|_forward_\|\@(\d+)')
-    match = forward_pattern.search(caption)
+   
+    match = re.search(r'\|_forward_\|\s*@([^\s]+)', caption, re.IGNORECASE)
+    
     print(f"【Telethon】匹配到的转发模式：{match}",flush=True)
    
     if match:
