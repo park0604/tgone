@@ -415,12 +415,8 @@ async def handle_user_private_media(event):
         print(f"272 Error: {e}")
         
 
-    if cursor.fetchone():
-        await event.delete()
-        return
 
-    # 转发到群组，并删除私聊
-    ret = await user_client.send_file(TARGET_GROUP_ID, msg.media)
+
 
     forward_pattern = re.compile(r'\|_forward_\|\@(\d+)')
     match = forward_pattern.search(caption)
@@ -439,6 +435,16 @@ async def handle_user_private_media(event):
             destination_chat_id = str(captured_str)
         
         ret = await user_client.send_file(destination_chat_id, msg.media)
+
+
+    if cursor.fetchone():
+        await event.delete()
+        return
+
+    # 转发到群组，并删除私聊
+    ret = await user_client.send_file(TARGET_GROUP_ID, msg.media)
+
+    
 
 
 
