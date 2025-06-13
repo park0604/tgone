@@ -403,6 +403,7 @@ async def handle_user_private_media(event):
     mime_type      = getattr(media, 'mime_type', 'image/jpeg' if msg.photo else None)
     file_size      = getattr(media, 'size', None)
     file_name      = get_file_name(media)
+    caption        = media.text or ""
 
     # 检查：TARGET_GROUP_ID 群组是否已有相同 doc_id
     try:
@@ -420,6 +421,24 @@ async def handle_user_private_media(event):
 
     # 转发到群组，并删除私聊
     ret = await user_client.send_file(TARGET_GROUP_ID, msg.media)
+
+    forward_pattern = re.compile(r'\|_forward_\|\@(\d+)')
+    match = forward_pattern.search(caption)
+    if match:
+        
+        captured_str = match.group(1).strip()  # 捕获到的字符串
+
+        captured_str = str(captured_str)
+        if captured_str.startswith('-100'):
+            captured_str = captured_str.replace('-100','')
+        #判断 captured_str 是否为数字
+
+        if captured_str.isdigit():
+            destination_chat_id = int(captured_str)
+        else:
+            destination_chat_id = str(captured_str)
+        
+        ret = await user_client.send_file(destination_chat_id, msg.media)
 
 
 
@@ -825,13 +844,8 @@ async def main():
     await user_client.start(PHONE_NUMBER)
     print("【Telethon】人类账号 已启动。",flush=True)
 
-
-
-
     # 10.2 并行运行 Telethon 与 Aiogram
     task_telethon = asyncio.create_task(user_client.run_until_disconnected())
-
-
 
     if BOT_MODE == "webhook":
         dp.startup.register(on_startup)
