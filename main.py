@@ -3,8 +3,9 @@ import base64
 import pymysql
 import asyncio
 import json
+import time
 from dotenv import load_dotenv
-
+import aiohttp
 from telethon.sessions import StringSession
 from telethon import TelegramClient, events
 from telethon.tl.types import InputDocument
@@ -65,6 +66,9 @@ mysql_config = {
 db = pymysql.connect(**mysql_config)
 cursor = db.cursor()
 
+lz_var_start_time = time.time()
+lz_var_cold_start_flag = True
+
 # file_unique_id 通常是 base64 编码短字串，长度 20~35，字母+数字组成
 file_unique_id_pattern = re.compile(r'^[A-Za-z0-9_-]{12,64}$')
 # doc_id 是整数，通常为 Telegram 64-bit ID
@@ -91,7 +95,10 @@ async def heartbeat():
         await asyncio.sleep(600)
 
 async def health(request):
-    return web.Response(text="OK")
+    uptime = time.time() - lz_var_start_time
+    if lz_var_cold_start_flag or uptime < 10:
+        return web.Response(text="⏳ Bot 正在唤醒，请稍候...", status=503)
+    return web.Response(text="✅ Bot 正常运行", status=200)
 
 
 async def on_startup(bot: Bot):
@@ -99,7 +106,7 @@ async def on_startup(bot: Bot):
     print(f"🔗 設定 Telegram webhook 為：{webhook_url}")
     await bot.delete_webhook(drop_pending_updates=True)
     await bot.set_webhook(webhook_url)
-
+    lz_var_cold_start_flag = False  # 启动完成
 
 
 # async def start_webhook_server():
@@ -179,8 +186,6 @@ def upsert_file_record(fields: dict):
 async def send_media_by_doc_id(client, to_user_id, doc_id, client_type,msg_id=None):
     print(f"【send_media_by_doc_id】开始处理 doc_id={doc_id}，目标用户：{to_user_id}",flush=True)
 
-
-
     try:
         safe_execute(
             "SELECT chat_id, message_id, doc_id, access_hash, file_reference, file_id, file_unique_id,file_type "
@@ -205,10 +210,6 @@ async def send_media_by_doc_id(client, to_user_id, doc_id, client_type,msg_id=No
             await client.send_message(to_user_id, f"未找到 doc_id={doc_id} 对应的文件记录。")
         return
 
-
-
-    
-
     if client_type == 'bot':
         # 机器人账号发送
         await send_media_via_bot(client, to_user_id, row, msg_id)
@@ -232,9 +233,6 @@ async def send_media_by_file_unique_id(client, to_user_id, file_unique_id, clien
     except Exception as e:
         print(f"148 Error: {e}")
         return
-
-
-
     if client_type == 'bot':
         # 机器人账号发送
         await send_media_via_bot(client, to_user_id, row, msg_id)
@@ -566,8 +564,6 @@ async def aiogram_handle_private_text(message: types.Message):
     # 只处理“私聊里发来的文本”
     if message.chat.type != "private" or message.content_type != ContentType.TEXT:
         return
-    
-
     text = message.text.strip()
     to_user_id = message.chat.id
     reply_to_message = message.message_id
@@ -806,6 +802,17 @@ async def aiogram_handle_group_media(message: types.Message):
         })
 
 
+async def keep_alive_ping():
+    url = f"{WEBHOOK_HOST}{WEBHOOK_PATH}" if BOT_MODE == "webhook" else f"{WEBHOOK_HOST}/"
+    while True:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    print(f"🌐 Keep-alive ping {url} status {resp.status}")
+        except Exception as e:
+            print(f"⚠️ Keep-alive ping failed: {e}")
+        await asyncio.sleep(300)  # 每 5 分鐘 ping 一次
+
 
 # ================= 14. 启动两个客户端 =================
 async def main():
@@ -835,6 +842,8 @@ async def main():
 
         SimpleRequestHandler(dispatcher=dp, bot=bot_client).register(app, path=WEBHOOK_PATH)
         setup_application(app, dp, bot=bot_client)
+
+        task_keep_alive = asyncio.create_task(keep_alive_ping())
 
         # ✅ Render 环境用 PORT，否则本地用 8080
         port = int(os.environ.get("PORT", 8080))
