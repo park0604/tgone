@@ -387,7 +387,9 @@ async def handle_user_private_media(event):
     if not msg.is_private or not (msg.document or msg.photo or msg.video):
         return
     print(f"【Telethon】收到私聊媒体：{event.message.media}，来自 {event.message.from_id}",flush=True)
- 
+    print(f"{msg}",flush=True)
+    print(f"{event.message.text}",flush=True)
+    
 
     if msg.document:
         media = msg.document
@@ -405,7 +407,7 @@ async def handle_user_private_media(event):
     mime_type      = getattr(media, 'mime_type', 'image/jpeg' if msg.photo else None)
     file_size      = getattr(media, 'size', None)
     file_name      = get_file_name(media)
-    caption        = msg.text or ""
+    caption        = event.message.text or ""
 
     # 检查：TARGET_GROUP_ID 群组是否已有相同 doc_id
     try:
@@ -416,16 +418,11 @@ async def handle_user_private_media(event):
     except Exception as e:
         print(f"272 Error: {e}")
         
-
-
-
-
     forward_pattern = re.compile(r'\|_forward_\|\@(\d+)')
     match = forward_pattern.search(caption)
     print(f"【Telethon】匹配到的转发模式：{match}",flush=True)
    
     if match:
-        
         captured_str = match.group(1).strip()  # 捕获到的字符串
         print(f"【Telethon】捕获到的字符串：{captured_str}",flush=True)
 
