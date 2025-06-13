@@ -403,7 +403,7 @@ async def handle_user_private_media(event):
     mime_type      = getattr(media, 'mime_type', 'image/jpeg' if msg.photo else None)
     file_size      = getattr(media, 'size', None)
     file_name      = get_file_name(media)
-    caption        = media.text or ""
+    caption        = msg.text or ""
 
     # 检查：TARGET_GROUP_ID 群组是否已有相同 doc_id
     try:
