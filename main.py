@@ -418,8 +418,8 @@ async def handle_user_private_media(event):
     except Exception as e:
         print(f"272 Error: {e}")
         
-   
-    match = re.search(r'\|_forward_\|\@(-?\d+|[A-Za-z0-9_]+)', caption, re.IGNORECASE)
+                    
+    match = re.search(r'\|_forward_\|\@?(-?\d+|[A-Za-z0-9_]+)', caption, re.IGNORECASE)
     
     print(f"【Telethon】匹配到的转发模式：{match}",flush=True)
    
@@ -434,12 +434,11 @@ async def handle_user_private_media(event):
             destination_chat_id = int(captured_str)
         else:
             print(f"【Telethon】捕获到的字符串不是数字：{captured_str}",flush=True)
-        
             destination_chat_id = str(captured_str)
         
         ret = await user_client.send_file(destination_chat_id, msg.media)
         print(f"【Telethon】已转发到目标群组：{destination_chat_id}，消息 ID：{ret.id}",flush=True)
-        print(f"{ret}")
+        print(f"{ret}",flush=True)
 
     if cursor.fetchone():
         await event.delete()
